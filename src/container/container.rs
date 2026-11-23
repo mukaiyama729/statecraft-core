@@ -1,6 +1,6 @@
 use crate::{
     container::{error::ContainerError, registry::ProviderRegistry},
-    provider::ReadKey,
+    provider::{ReadKey, StateProvider},
 };
 
 /// Owns state and borrows registered provider keys for `'a`.
@@ -17,6 +17,8 @@ use crate::{
 /// }
 /// assert_eq!(container.registered_count(), 1);
 /// ```
+/// stateの所有権はここで移動させられる
+/// registryも
 pub struct ProviderContainer<'a, S, const N: usize> {
     state: S,
     registry: ProviderRegistry<'a, N>,
@@ -35,6 +37,13 @@ impl<'a, S: 'static, const N: usize> ProviderContainer<'a, S, N> {
         provider: &'a ReadKey<S, T>,
     ) -> Result<(), ContainerError> {
         self.registry.register(provider)
+    }
+
+    pub fn register_state<T: 'static>(
+        &mut self,
+        provider: &'a StateProvider<S, T>,
+    ) -> Result<(), ContainerError> {
+        self.register(provider.read_key())
     }
 
     /// Returns a reference tied to the borrow of this container, not of the key.
@@ -57,6 +66,32 @@ impl<'a, S: 'static, const N: usize> ProviderContainer<'a, S, N> {
         self.registry.validate(provider)?;
 
         Ok(provider.get(&self.state))
+    }
+
+    pub fn read_state<'b, T: 'static>(
+        &self,
+        provider: &'b StateProvider<S, T>,
+    ) -> Result<&T, ContainerError> {
+        self.read(provider.read_key())
+    }
+
+    pub fn update<T: 'static, R>(
+        &mut self,
+        provider: &'a StateProvider<S, T>,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, ContainerError> {
+        self.registry.validate(provider.read_key())?;
+        Ok(f(provider.write_key().get_mut(&mut self.state)))
+    }
+
+    pub fn set<T: 'static>(
+        &mut self,
+        provider: &'a StateProvider<S, T>,
+        value: T,
+    ) -> Result<(), ContainerError> {
+        self.update(provider, |slot| {
+            *slot = value;
+        })
     }
 
     pub fn registered_count(&self) -> usize {
