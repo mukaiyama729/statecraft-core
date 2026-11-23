@@ -1,76 +1,113 @@
-use statecraft_core::{container::ProviderContainer, provider::ReadKey};
+use statecraft_core::{container::ProviderContainer, state::Field};
 
-#[derive(Debug)]
 struct RobotState {
     pir_detected: bool,
     usb_connected: bool,
     battery: u8,
 }
 
-impl RobotState {
-    const fn new() -> Self {
-        Self {
-            pir_detected: false,
-            usb_connected: false,
-            battery: 82,
+struct Pir;
+impl Field<RobotState> for Pir {
+    type Value = bool;
+    fn get(state: &RobotState) -> &bool {
+        &state.pir_detected
+    }
+    fn get_mut(state: &mut RobotState) -> &mut bool {
+        &mut state.pir_detected
+    }
+}
+
+struct Usb;
+impl Field<RobotState> for Usb {
+    type Value = bool;
+    fn get(state: &RobotState) -> &bool {
+        &state.usb_connected
+    }
+    fn get_mut(state: &mut RobotState) -> &mut bool {
+        &mut state.usb_connected
+    }
+}
+
+struct Battery;
+impl Field<RobotState> for Battery {
+    type Value = u8;
+    fn get(state: &RobotState) -> &u8 {
+        &state.battery
+    }
+    fn get_mut(state: &mut RobotState) -> &mut u8 {
+        &mut state.battery
+    }
+}
+
+#[test]
+fn read_and_update_fields_without_registration() {
+    let mut container = ProviderContainer::new(RobotState {
+        pir_detected: false,
+        usb_connected: true,
+        battery: 82,
+    });
+
+    assert!(!*container.read::<Pir>().unwrap());
+    assert!(*container.read::<Usb>().unwrap());
+    assert_eq!(*container.read::<Battery>().unwrap(), 82);
+
+    container.set::<Pir>(true).unwrap();
+    container.set::<Usb>(false).unwrap();
+    container.set::<Battery>(90).unwrap();
+    let previous = container
+        .update::<Battery, _>(|battery| {
+            let previous = *battery;
+            *battery -= 10;
+            previous
+        })
+        .unwrap();
+
+    assert_eq!(previous, 90);
+    assert_eq!(*container.read::<Battery>().unwrap(), 80);
+    assert!(*container.read::<Pir>().unwrap());
+    assert!(!*container.read::<Usb>().unwrap());
+}
+
+#[test]
+fn independent_containers() {
+    let mut first = ProviderContainer::new(RobotState {
+        pir_detected: false,
+        usb_connected: false,
+        battery: 82,
+    });
+    let second = ProviderContainer::new(RobotState {
+        pir_detected: true,
+        usb_connected: true,
+        battery: 30,
+    });
+
+    first.set::<Battery>(100).unwrap();
+
+    assert_eq!(*first.read::<Battery>().unwrap(), 100);
+    assert_eq!(*second.read::<Battery>().unwrap(), 30);
+}
+
+#[test]
+fn read_borrows_owned_state_without_copying() {
+    struct Text;
+    impl Field<String> for Text {
+        type Value = String;
+        fn get(state: &String) -> &String {
+            state
+        }
+        fn get_mut(state: &mut String) -> &mut String {
+            state
         }
     }
-}
 
-static PIR_PROVIDER: ReadKey<RobotState, bool> = ReadKey::new(0, |state| &state.pir_detected);
-
-static USB_PROVIDER: ReadKey<RobotState, bool> = ReadKey::new(1, |state| &state.usb_connected);
-
-static BATTERY_PROVIDER: ReadKey<RobotState, u8> = ReadKey::new(2, |state| &state.battery);
-
-#[test]
-fn register_and_read() {
-    let mut container = ProviderContainer::<RobotState, 8>::new(RobotState::new());
-
-    container.register(&PIR_PROVIDER).unwrap();
-    container.register(&USB_PROVIDER).unwrap();
-    container.register(&BATTERY_PROVIDER).unwrap();
-
-    let pir = container.read(&PIR_PROVIDER).unwrap();
-
-    let usb = container.read(&USB_PROVIDER).unwrap();
-
-    let battery = container.read(&BATTERY_PROVIDER).unwrap();
-
-    assert!(!*pir);
-    assert!(!*usb);
-    assert_eq!(*battery, 82);
-
-    assert_eq!(container.registered_count(), 3);
-    assert_eq!(container.capacity(), 8);
-}
-
-#[test]
-fn register_and_read_local_provider() {
-    let provider = ReadKey::new(0, |state: &RobotState| &state.battery);
-    let mut container = ProviderContainer::<_, 1>::new(RobotState::new());
-
-    container.register(&provider).unwrap();
-
-    assert_eq!(*container.read(&provider).unwrap(), 82);
-    assert_eq!(container.registered_count(), 1);
-}
-
-#[test]
-fn read_borrows_owned_state_independently_of_key_argument() {
-    fn read_with_short_key_borrow<'container>(
-        container: &'container ProviderContainer<'_, String, 1>,
-        provider: &ReadKey<String, String>,
-    ) -> &'container String {
-        container.read(provider).unwrap()
-    }
-
-    let provider = ReadKey::new(0, |state: &String| state);
-    let mut container = ProviderContainer::<_, 1>::new(String::from("local state"));
-    container.register(&provider).unwrap();
-
-    let value = read_with_short_key_borrow(&container, &provider);
-
+    let mut container = ProviderContainer::new(String::from("local state"));
+    let value = container.read::<Text>().unwrap();
     assert_eq!(value, "local state");
-    assert!(core::ptr::eq(value, container.read(&provider).unwrap()));
+    assert!(core::ptr::eq(value, container.read::<Text>().unwrap()));
+
+    let suffix = String::from(" updated");
+    container
+        .update::<Text, _>(move |text| text.push_str(&suffix))
+        .unwrap();
+    assert_eq!(container.read::<Text>().unwrap(), "local state updated");
 }

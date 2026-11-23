@@ -1,54 +1,36 @@
-use statecraft_core::provider::ReadKey;
+use statecraft_core::{container::ProviderContainer, provider::NotifierProvider, state::Field};
 
-struct RobotState {
-    pir_detected: bool,
-    battery: u8,
+struct Battery;
+impl Field<u8> for Battery {
+    type Value = u8;
+    fn get(state: &u8) -> &u8 {
+        state
+    }
+    fn get_mut(state: &mut u8) -> &mut u8 {
+        state
+    }
 }
 
-fn get_pir(state: &RobotState) -> &bool {
-    &state.pir_detected
+struct BatteryLogic {
+    drain: u8,
 }
 
-fn get_battery(state: &RobotState) -> &u8 {
-    &state.battery
-}
-
-const PIR_PROVIDER: ReadKey<RobotState, bool> = ReadKey::new(0, get_pir);
-
-const BATTERY_PROVIDER: ReadKey<RobotState, u8> = ReadKey::new(1, get_battery);
-
-#[test]
-fn read_provider() {
-    let state = RobotState {
-        pir_detected: true,
-        battery: 82,
-    };
-
-    let pir = PIR_PROVIDER.get(&state);
-    let battery = BATTERY_PROVIDER.get(&state);
-
-    assert_eq!(*pir, true);
-    assert_eq!(*battery, 82);
+impl BatteryLogic {
+    fn tick(&self, container: &mut ProviderContainer<u8>) {
+        container
+            .update::<Battery, _>(|battery| *battery = battery.saturating_sub(self.drain))
+            .unwrap();
+    }
 }
 
 #[test]
-fn independent_states() {
-    let state_a = RobotState {
-        pir_detected: true,
-        battery: 82,
-    };
+fn notifier_preserves_logic_without_provider_keys() {
+    const NOTIFIER: NotifierProvider<Battery, BatteryLogic> =
+        NotifierProvider::new(BatteryLogic { drain: 10 });
+    let mut container = ProviderContainer::new(82);
 
-    let state_b = RobotState {
-        pir_detected: false,
-        battery: 30,
-    };
+    NOTIFIER.logic().tick(&mut container);
 
-    assert_eq!(*BATTERY_PROVIDER.get(&state_a), 82);
-    assert_eq!(*BATTERY_PROVIDER.get(&state_b), 30);
-}
-
-#[test]
-fn provider_id() {
-    assert_eq!(PIR_PROVIDER.id().index(), 0);
-    assert_eq!(BATTERY_PROVIDER.id().index(), 1);
+    assert_eq!(*container.read::<Battery>().unwrap(), 72);
+    assert_eq!(NOTIFIER.logic().drain, 10);
 }

@@ -1,104 +1,52 @@
-use crate::{
-    container::{error::ContainerError, registry::ProviderRegistry},
-    provider::{ReadKey, StateProvider},
-};
+use crate::{container::ContainerError, state::Field};
 
-/// Owns state and borrows registered provider keys for `'a`.
+/// Owns state and accesses its values through [`Field`] implementations.
+/// Fields do not need keys or registration.
 ///
-/// A registered key must remain alive while the container is used:
-///
-/// ```compile_fail,E0597
-/// use statecraft_core::{container::ProviderContainer, provider::ReadKey};
-///
-/// let mut container = ProviderContainer::<u8, 1>::new(82);
-/// {
-///     let provider = ReadKey::new(0, |state: &u8| state);
-///     container.register(&provider).unwrap();
-/// }
-/// assert_eq!(container.registered_count(), 1);
-/// ```
-/// stateの所有権はここで移動させられる
-/// registryも
-pub struct ProviderContainer<'a, S, const N: usize> {
+/// Accessors retain the `Result` return type, but currently always return `Ok`.
+pub struct ProviderContainer<S> {
     state: S,
-    registry: ProviderRegistry<'a, N>,
 }
 
-impl<'a, S: 'static, const N: usize> ProviderContainer<'a, S, N> {
+impl<S> ProviderContainer<S> {
     pub const fn new(state: S) -> Self {
-        Self {
-            state,
-            registry: ProviderRegistry::new(),
-        }
+        Self { state }
     }
 
-    pub fn register<T: 'static>(
-        &mut self,
-        provider: &'a ReadKey<S, T>,
-    ) -> Result<(), ContainerError> {
-        self.registry.register(provider)
-    }
-
-    pub fn register_state<T: 'static>(
-        &mut self,
-        provider: &'a StateProvider<S, T>,
-    ) -> Result<(), ContainerError> {
-        self.register(provider.read_key())
-    }
-
-    /// Returns a reference tied to the borrow of this container, not of the key.
+    /// Returns a reference tied to the borrow of this container.
     ///
     /// The reference cannot outlive the container that owns the state:
     ///
     /// ```compile_fail,E0597
-    /// use statecraft_core::{container::ProviderContainer, provider::ReadKey};
+    /// use statecraft_core::{container::ProviderContainer, state::Field};
     ///
-    /// static PROVIDER: ReadKey<String, String> = ReadKey::new(0, |state| state);
+    /// struct Text;
+    /// impl Field<String> for Text {
+    ///     type Value = String;
+    ///     fn get(state: &String) -> &String { state }
+    ///     fn get_mut(state: &mut String) -> &mut String { state }
+    /// }
     /// let value;
     /// {
-    ///     let mut container = ProviderContainer::<_, 1>::new(String::from("state"));
-    ///     container.register(&PROVIDER).unwrap();
-    ///     value = container.read(&PROVIDER).unwrap();
+    ///     let container = ProviderContainer::new(String::from("state"));
+    ///     value = container.read::<Text>().unwrap();
     /// }
     /// assert_eq!(value, "state");
     /// ```
-    pub fn read<T: 'static>(&self, provider: &ReadKey<S, T>) -> Result<&T, ContainerError> {
-        self.registry.validate(provider)?;
-
-        Ok(provider.get(&self.state))
+    pub fn read<F: Field<S>>(&self) -> Result<&F::Value, ContainerError> {
+        Ok(F::get(&self.state))
     }
 
-    pub fn read_state<'b, T: 'static>(
-        &self,
-        provider: &'b StateProvider<S, T>,
-    ) -> Result<&T, ContainerError> {
-        self.read(provider.read_key())
-    }
-
-    pub fn update<T: 'static, R>(
+    /// Updates a field and returns the closure's result.
+    pub fn update<F: Field<S>, R>(
         &mut self,
-        provider: &'a StateProvider<S, T>,
-        f: impl FnOnce(&mut T) -> R,
+        f: impl FnOnce(&mut F::Value) -> R,
     ) -> Result<R, ContainerError> {
-        self.registry.validate(provider.read_key())?;
-        Ok(f(provider.write_key().get_mut(&mut self.state)))
+        Ok(f(F::get_mut(&mut self.state)))
     }
 
-    pub fn set<T: 'static>(
-        &mut self,
-        provider: &'a StateProvider<S, T>,
-        value: T,
-    ) -> Result<(), ContainerError> {
-        self.update(provider, |slot| {
-            *slot = value;
-        })
-    }
-
-    pub fn registered_count(&self) -> usize {
-        self.registry.len()
-    }
-
-    pub const fn capacity(&self) -> usize {
-        self.registry.capacity()
+    pub fn set<F: Field<S>>(&mut self, value: F::Value) -> Result<(), ContainerError> {
+        *F::get_mut(&mut self.state) = value;
+        Ok(())
     }
 }

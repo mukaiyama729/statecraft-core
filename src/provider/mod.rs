@@ -1,8 +1,5 @@
 mod id;
-mod read_key;
-mod state_provider;
-mod write_key;
+mod notifier_provider;
 
 pub use id::ProviderId;
-pub use read_key::ReadKey;
-pub use state_provider::StateProvider;
+pub use notifier_provider::NotifierProvider;
