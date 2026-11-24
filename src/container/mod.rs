@@ -1,5 +1,3 @@
-mod container;
-mod error;
-
-pub use container::ProviderContainer;
-pub use error::ContainerError;
+pub mod pointer;
+pub mod pointer_manager;
+pub mod provider_container;

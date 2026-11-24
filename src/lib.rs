@@ -1,6 +1,13 @@
 #![no_std]
-#![forbid(unsafe_code)]
+//! Riverpod-inspired reactive container implemented in no_std + alloc.
+//!
+//! One task owns a ProviderContainer. Share it across cores using message passing.
+//! Do not treat ProviderContainer as Sync.
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
-pub mod container;
-pub mod provider;
-pub mod state;
+mod container;
+mod element;
+mod provider;
+mod reference;
