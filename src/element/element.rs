@@ -1,6 +1,6 @@
 use crate::{
     provider::{base::ProviderId, functional::Provider},
-    reference::provider_ref::{BuildContext, Ref},
+    reference::{build_context::BuildContext, provider_ref::Ref},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +22,8 @@ pub struct Update<T> {
     pub previous: Option<T>,
 }
 
+// 状態管理を担う。
+// Providerはあくまで状態を提供するもの
 pub struct ProviderElement<T: 'static> {
     provider: &'static Provider<T>,
     value: Option<T>,
@@ -90,17 +92,11 @@ impl<T: 'static> ProviderElement<T> {
         self.dirty = true;
     }
 
-    pub fn flush(&mut self) -> Option<Update<T>> {
-        if self.status() == ElementStatus::Clean {
-            return None;
+    pub(crate) fn prepare_build(&self) -> Option<&'static Provider<T>> {
+        match self.status() {
+            ElementStatus::Clean => None,
+
+            ElementStatus::Uninitialized | ElementStatus::Dirty => Some(self.provider),
         }
-
-        let mut context = BuildContext::new(self.provider_id());
-
-        let mut ref_ = Ref::new(&mut context);
-
-        let next = self.provider.create(&mut ref_);
-
-        Some(self.set_value(next))
     }
 }

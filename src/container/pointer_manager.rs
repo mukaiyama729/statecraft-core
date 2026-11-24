@@ -25,6 +25,9 @@ impl ProviderPointerManager {
         self.pointers.get_mut(&id)
     }
 
+    // ここでstaticなProviderインスタンスを以下のように保存
+    // provider_id: ProviderPointer
+    // ProviderPointerはProviderElementをヒープ上におくための入れ物
     pub(crate) fn upsert<T: PartialEq + 'static>(
         &mut self,
         provider: &'static Provider<T>,

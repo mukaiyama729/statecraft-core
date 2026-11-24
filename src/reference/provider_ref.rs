@@ -1,25 +1,28 @@
-use crate::provider::base::ProviderId;
-
-pub(crate) struct BuildContext {
-    owner: ProviderId,
-}
-
-impl BuildContext {
-    pub(crate) fn new(owner: ProviderId) -> Self {
-        Self { owner }
-    }
-}
+use crate::{
+    container::provider_container::ContainerError,
+    provider::{base::ProviderId, functional::Provider},
+    reference::build_context::BuildContext,
+};
 
 pub struct Ref<'a> {
-    context: &'a mut BuildContext,
+    context: BuildContext<'a>,
 }
 
 impl<'a> Ref<'a> {
-    pub(crate) fn new(context: &'a mut BuildContext) -> Self {
+    pub(crate) fn new(context: BuildContext<'a>) -> Self {
         Self { context }
     }
 
     pub fn provider_id(&self) -> ProviderId {
-        self.context.owner
+        self.context.frame.owner()
+    }
+
+    pub fn read<T: Clone + PartialEq + 'static>(
+        &mut self,
+        provider: &'static Provider<T>,
+    ) -> Result<T, ContainerError> {
+        self.context
+            .container
+            .read_with_parent(provider, self.context.frame)
     }
 }
