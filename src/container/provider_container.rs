@@ -1,5 +1,6 @@
 use crate::{
     container::pointer_manager::ProviderPointerManager,
+    element::element::UpdateKind,
     provider::{
         base::{ProviderBase, ProviderId},
         functional::Provider,
@@ -8,22 +9,26 @@ use crate::{
         build_context::{BuildContext, BuildFrame},
         provider_ref::Ref,
     },
+    subscription::{Subscription, subscription_store::SubscriptionStore},
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerError {
     TypeMismatch,
     MissingState,
     CircularDependency(ProviderId),
+    SubscriptionIdExhausted,
 }
 
 pub struct ProviderContainer {
     pointer_manager: ProviderPointerManager,
+    subscription_store: SubscriptionStore,
 }
 
 impl ProviderContainer {
     pub const fn new() -> Self {
         Self {
             pointer_manager: ProviderPointerManager::new(),
+            subscription_store: SubscriptionStore::new(),
         }
     }
 
@@ -116,7 +121,13 @@ impl ProviderContainer {
             .typed_mut::<T>()
             .ok_or(ContainerError::TypeMismatch)?;
 
-        let _ = element.set_value(next);
+        let update = element.set_value(next);
+
+        if update.kind == UpdateKind::Changed {
+            let next_ref = element.read_cached().ok_or(ContainerError::MissingState)?;
+            self.subscription_store
+                .notify(id, update.previous.as_ref(), next_ref)?;
+        }
 
         Ok(())
     }
@@ -139,6 +150,56 @@ impl ProviderContainer {
         }
     }
 
+    pub fn listen<T, F>(
+        &mut self,
+        provider: &'static Provider<T>,
+        callback: F,
+    ) -> Result<Subscription, ContainerError>
+    where
+        T: PartialEq + 'static,
+        F: FnMut(Option<&T>, &T) + 'static,
+    {
+        self.listen_with_options(provider, callback, false)
+    }
+
+    pub fn listen_with_options<T, F>(
+        &mut self,
+        provider: &'static Provider<T>,
+        callback: F,
+        fire_immediately: bool,
+    ) -> Result<Subscription, ContainerError>
+    where
+        T: PartialEq + 'static,
+        F: FnMut(Option<&T>, &T) + 'static,
+    {
+        // Providerが未初期化なら生成する
+        self.ensure_initialized(provider, None)?;
+
+        let initial = if fire_immediately {
+            let pointer = self
+                .pointer_manager
+                .get(provider.id())
+                .ok_or(ContainerError::MissingState)?;
+
+            let element = pointer.typed::<T>().ok_or(ContainerError::TypeMismatch)?;
+
+            Some(element.read_cached().ok_or(ContainerError::MissingState)?)
+        } else {
+            None
+        };
+
+        self.subscription_store
+            .register(provider, callback, initial)
+    }
+
+    pub fn unsubscribe(&mut self, subscription: &Subscription) -> bool {
+        self.subscription_store.remove(subscription)
+    }
+
+    pub fn listener_count<P: ProviderBase>(&self, provider: &'static P) -> usize {
+        self.subscription_store.listener_count(provider.id())
+    }
+
     pub fn refresh<T: Clone + PartialEq + 'static>(
         &mut self,
         provider: &'static Provider<T>,
@@ -153,10 +214,13 @@ impl ProviderContainer {
     }
 
     pub fn remove<P: ProviderBase>(&mut self, provider: &'static P) -> bool {
-        self.pointer_manager.remove(provider.id()).is_some()
+        let id = provider.id();
+        self.subscription_store.remove_provider(id);
+        self.pointer_manager.remove(id).is_some()
     }
 
     pub fn clear(&mut self) {
+        self.subscription_store.clear();
         self.pointer_manager.clear();
     }
 

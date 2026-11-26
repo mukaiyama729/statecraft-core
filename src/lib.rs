@@ -8,6 +8,7 @@ extern crate alloc;
 extern crate std;
 
 mod container;
-mod element;
+pub(crate) mod element;
 mod provider;
 mod reference;
+mod subscription;
